@@ -1,6 +1,6 @@
 import struct
 from dataclasses import dataclass
-from PIL import Image
+import numpy as np
 
 
 # BitMap 클래스
@@ -10,43 +10,29 @@ class Bitmap:
             # BitmapFileHeader (14 bytes)
             bf_header_bits = f.read(14)
             bf_header = struct.unpack('<2sIHHI', bf_header_bits)
-            self.bitmapFileHeader = BitmapFileHeader(*bf_header)
+            self.bitmap_file_header = BitmapFileHeader(*bf_header)
 
             # BitmapInfoHeader (40 bytes)
             bi_header_bits = f.read(40)
             bi_header = struct.unpack('<IIIHHIIIIII', bi_header_bits)
-            self.bitmapInfoHeader = BitmapInfoHeader(*bi_header)
+            self.bitmap_info_header = BitmapInfoHeader(*bi_header)
 
-            # 색상 테이블(팔레트)
-            self.palette = []
-            if self.bitmapInfoHeader.biBitCount != 24:
-                palette_num = 2 ** self.bitmapInfoHeader.biBitCount
-                rgbQuad_bits = struct.unpack('<' + 'BBBB' * palette_num, f.read(4 * palette_num))
-                for i in range(0, len(rgbQuad_bits), 4):
-                    self.palette.append(RGBQuad(*rgbQuad_bits[i:i+4]))
+            bi_width = self.bitmap_info_header.biWidth
+            bi_height = self.bitmap_info_header.biHeight
+            bi_bit_count = self.bitmap_info_header.biBitCount
 
             # Pixel Data
-            image_size = ((self.bitmapInfoHeader.biWidth * self.bitmapInfoHeader.biHeight // 8) + 3 & ~3) * self.bitmapInfoHeader.biBitCount
-            self.pixelData = f.read(image_size)
+            if bi_bit_count != 24:
+                palette_num = 2 ** bi_bit_count
+                self.palette = np.frombuffer(f.read(4 * palette_num), dtype=np.uint8).reshape((palette_num, 4))[:, :3]
 
-    def get_image(self):
-        bi = self.bitmapInfoHeader
-        width = bi.biWidth
-        height = bi.biHeight
-        bit_count = bi.biBitCount
-        data = self.pixelData
+                pixel_data_size = (((bi_width * bi_bit_count // 8) + 3) & ~3) * bi_height
 
-        if bit_count == 24:  # 24-bit bitmap (True Color)
-            img = Image.frombytes('RGB', (width, height), data, 'raw', 'BGR', 0, 1)
-        else:  # n-bit bitmap (Indexed Color)
-            img = Image.frombytes('P', (width, height), data, 'raw', 'P', 0, 1)
-            palette_data = []
-            for rgb_quad in self.palette:
-                palette_data.extend([rgb_quad.rgbRed, rgb_quad.rgbGreen, rgb_quad.rgbBlue])
-            img.putpalette(palette_data)
-
-        img = img.transpose(Image.FLIP_TOP_BOTTOM)  # 상하 반전
-        return img
+                color_index = np.frombuffer(f.read(pixel_data_size), dtype=np.uint8)
+                self.pixel_data = self.palette[color_index].reshape(bi_height, bi_width, 3)
+            else:
+                pixel_data_size = 3 * ((bi_width + 3) & ~3) * bi_height
+                self.pixel_data = np.frombuffer(f.read(pixel_data_size), dtype=np.uint8).reshape(bi_height, bi_width, 3)
 
 
 # 비트맵 파일 헤더
